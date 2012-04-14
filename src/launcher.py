@@ -6,7 +6,6 @@ import ConfigParser
 
 def launch():
     cfg = ConfigParser.RawConfigParser()
-    print('Copy rcon example config file and add own values.')
     cfg.read('../config/rcon.cfg')
 
     try:

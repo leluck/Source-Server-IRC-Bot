@@ -1,5 +1,7 @@
 import re
 import time
+import logging
+import logging.handlers
 
 import irclib.ircbot as ircbot
 import irclib.irclib as irclib
@@ -10,7 +12,18 @@ class SFRconIdentifierError(Exception):
 class SFBot(ircbot.SingleServerIRCBot):
     def __init__(self, nick, channel, server, port = 6667):
         ircbot.SingleServerIRCBot.__init__(self, [(server, port)], nick, nick)
+        
+        self.log = logging.Logger('SFBot')
+        self.log.setLevel(logging.INFO)
+        fHandler = logging.handlers.WatchedFileHandler('../log/sfbot.log')
+        fHandler.setLevel(logging.INFO)
+        fHandler.setFormatter(logging.Formatter('%(asctime)s | %(message)s'))
+        self.log.addHandler(fHandler)
+        
+        self.log.info('## SfBot launched as %s in: %s@%s:%d' % (nick, channel, server, port))
+        
         self.channel = channel
+        self.rcon = dict()
         self.auths = dict()
         self.users = {
             'LeLuck':       {'passphrase': '2f@P?A', 'aclid': 2},
@@ -43,7 +56,6 @@ class SFBot(ircbot.SingleServerIRCBot):
                 'say':          [1,2,3]
             }
         }
-        self.rcon = dict()
     
     def set_rcon(self, identifier, rc):
         self.rcon[identifier] = rc
@@ -65,10 +77,18 @@ class SFBot(ircbot.SingleServerIRCBot):
                     break
             try:
                 if key is not None and hasattr(self, 'cmd_%s' % (key)):
+                    authed = 'OK'
+                    account = ''
+                    if event.source() in self.auths:
+                        account = self.auths[event.source()]['account']
+                    
                     if not self._check_acl(event, cmdParts[1:last]):
                         connection.notice(irclib.nm_to_n(event.source()), 'You do not have access to this command.')
+                        authed = 'DENIED'
                     else:
                         getattr(self, 'cmd_%s' % (key))(connection, event, cmdParts[1:last], cmdParts[last:])
+                    
+                    self.log.info('"%s" (%s): (%s) %s' % (irclib.nm_to_n(event.source()), account, authed, ' '.join(cmdParts[1:])))
                     return
             except TypeError as te:
                 print(te)
@@ -232,11 +252,13 @@ class SFBot(ircbot.SingleServerIRCBot):
     
     def _auth_user(self, connection, event, account, passphrase):
         if account not in self.users:
+            self.log.info('"%s" tried to auth with non-existant account "%s"' % (irclib.nm_to_n(event.source()), account))
             return False
         
         if self.users[account]['passphrase'] == passphrase:
             self.auths[event.source()] = {'account': account, 'authed': True, 'time': time.time()}
             connection.notice(irclib.nm_to_n(event.source()), 'Authentication successful.')
+            self.log.info('"%s" authed as "%s" (acl level %d)' % (irclib.nm_to_n(event.source()), account, self.users[account]['aclid']))
     
     def _check_acl(self, event, command):
         target = self.cmdlist
