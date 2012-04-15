@@ -21,7 +21,10 @@
 
 import re
 import time
+import socket
 import logging.handlers
+import Queue
+import threading
 
 import irclib.ircbot as ircbot
 import irclib.irclib as irclib
@@ -32,6 +35,9 @@ class SFRconIdentifierError(Exception):
 class SFBot(ircbot.SingleServerIRCBot):
     def __init__(self, nick, channel, server, port = 6667):
         ircbot.SingleServerIRCBot.__init__(self, [(server, port)], nick, nick)
+        self.channel = channel
+        self.nick = nick
+        self.fallbackconnect = None
         
         self.log = logging.Logger('SFBot')
         self.log.setLevel(logging.INFO)
@@ -40,9 +46,18 @@ class SFBot(ircbot.SingleServerIRCBot):
         fHandler.setFormatter(logging.Formatter('%(asctime)s | %(message)s'))
         self.log.addHandler(fHandler)
         
-        self.log.info('## SfBot launched as %s in: %s@%s:%d' % (nick, channel, server, port))
+        self.log.info('## Joined as %s in: %s@%s:%d' % (nick, channel, server, port))
         
-        self.channel = channel
+        self.ircqueue = Queue.Queue(30)
+        self.ircsender = threading.Thread(target = SFBot._worker_irc, args = (self,))
+        self.ircsender.daemon = True
+        self.ircsender.start()
+        
+        self.chatqueue = Queue.Queue(10)
+        self.udplistener = threading.Thread(target = SFBot._udp_listen, args = (self, '0.0.0.0', 26999))
+        self.udplistener.daemon = True
+        self.udplistener.start()
+        
         self.rcon = dict()
         self.auths = dict()
         self.users = {
@@ -147,16 +162,17 @@ class SFBot(ircbot.SingleServerIRCBot):
     
     def on_welcome(self, connection, event):
         connection.join(self.channel)
-        connection.privmsg(self.channel, 'Ohai.')
+        self.ircqueue.put((connection, 'Ohai'))
+        self.fallbackconnect = connection
     
     def cmd_exec(self, connection, event, command, args):
         if len(args) == 1:
             file = args[0]
             result = self._rcon(command[0], 'exec %s' % (file))
             if result.split(';')[0] == '\'%s\' not present' % (file):
-                connection.privmsg(self.channel, 'Config not present; not executing.')
+                self.ircqueue.put((connection, 'Config not present; not executing.'))
             else:
-                connection.privmsg(self.channel, 'Config \'%s\' executed.' % (file))
+                self.ircqueue.put((connection, 'Config \'%s\' executed.' % (file)))
     
     def cmd_help(self, connection, event, command, args):
         acl_id = 0
@@ -204,34 +220,32 @@ class SFBot(ircbot.SingleServerIRCBot):
                         kicked.append(p['name'])
             
             if len(kicked):
-                connection.privmsg(self.channel, 'Kicked %s' % (', '.join(kicked)))
+                self.ircqueue.put((connection, 'Kicked %s' % (', '.join(kicked))))
             else:
-                connection.privmsg(self.channel, 'No matching player.')
-    
-    def cmd_kickteam(self, connection, event, command, args):
-        if len(args) == 0:
-            connection.notice(irclib.nm_to_n(event.source()), 'No team name (red|blue) specified.')
-        else:
-            connection.privmsg(self.channel, 'Kicking all players from team %s.' % args[0].upper()[0:3])
+                self.ircqueue.put((connection, 'No matching player.'))
     
     def cmd_map(self, connection, event, command, args):
+        message = ''
         if len(args) == 0:
             status = self._parse_rcon_status(self._rcon(command[0], 'status'))
-            connection.privmsg(self.channel, 'Current map is: %s' % (status['map'].split()[0]))
+            message = 'Current map is: %s' % (status['map'].split()[0])
         elif len(args) == 1:
             result = self._rcon(command[0], 'changelevel %s' % (args[0]))
             if len(result) > 0:
-                connection.privmsg(self.channel, 'Map change failed: No such map.')
+                message = 'Map change failed: No such map.'
             else:
-                connection.privmsg(self.channel, 'Changing map to %s' % (args[0]))
+                message = 'Changing map to %s' % (args[0])
+        self.ircqueue.put((connection, message))
 
     def cmd_password(self, connection, event, command, args):
+        message = ''
         if len(args) == 0:
             result = self._parse_var(self._rcon(command[0], 'sv_password'))
-            connection.privmsg(self.channel, 'Current password is: %s' % (result))
+            message = 'Current password is: %s' % (result)
         elif len(args) == 1:
             result = self._rcon(command[0], 'sv_password %s' % (args[0]))
-            connection.privmsg(self.channel, 'New password is: %s' % (args[0]))
+            message = 'New password is: %s' % (args[0])
+        self.ircqueue.put((connection, message))
 
     def cmd_players(self, connection, event, command, args):
         pattern = None
@@ -244,21 +258,21 @@ class SFBot(ircbot.SingleServerIRCBot):
             if pattern is None:
                 if pCount % 8 == 1:
                     time.sleep(0.5)
-                connection.privmsg(self.channel, '%4d %s' % (int(p['id']), p['name']))
+                self.ircqueue.put((connection, '%4d %s' % (int(p['id']), p['name'])))
                 pCount += 1
             else:
                 if pattern.search(p['name']):
                     if pCount % 8 == 1:
                         time.sleep(0.5)
-                    connection.privmsg(self.channel, '%4d %s' % (int(p['id']), p['name']))
+                    self.ircqueue.put((connection, '%4d %s' % (int(p['id']), p['name'])))
                     pCount += 1
         if pCount == 0:
-            connection.privmsg(self.channel, 'No players found.')
+            self.ircqueue.put((connection, 'No players found.'))
         else:
-            connection.privmsg(self.channel, '%d players found.' % (pCount))
+            self.ircqueue.put((connection, '%d players found.' % (pCount)))
 
     def cmd_restart(self, connection, event, command, args):
-        connection.privmsg(self.channel, 'Restarting server.')
+        self.ircqueue.put((connection, 'Restarting server "%s".' % (command[0])))
         self._rcon(command[0], '_restart')
 
     def cmd_say(self, connection, event, command, args):
@@ -268,7 +282,7 @@ class SFBot(ircbot.SingleServerIRCBot):
     def cmd_status(self, connection, event, command, args):
         status = self._parse_rcon_status(self._rcon(command[0], 'status'))
         for property in status:
-            connection.privmsg(self.channel, '%s: %s' % (property, status[property]))
+            self.ircqueue.put((connection, '%s: %s' % (property, status[property])))
     
     def _auth_user(self, connection, event, account, passphrase):
         if account not in self.users:
@@ -338,3 +352,41 @@ class SFBot(ircbot.SingleServerIRCBot):
             return 'an hour ago'
         if diff < 86400:
             return str( diff / 3600 ) + ' hours ago'
+    
+    def _udp_listen(self, host, port):
+        log = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        log.bind((socket.gethostbyname(host), port))
+        
+        lineformat = re.compile('^"(?P<name>.+?)<\d+><(?P<steam>STEAM_.+?)><(?P<team>Spectator|Blue|Red)>"\s(?P<type>say|say_team)\s"(?P<message>.+?)"', 
+        re.MULTILINE|re.VERBOSE)
+        while True:
+            data = log.recv(1024)
+            chat = lineformat.search(data)
+            if chat:
+                self.chatqueue.put({'name': chat.group('name').strip(),
+                                    'steam': chat.group('steam').strip(),
+                                    'team': chat.group('team').strip(),
+                                    'type': chat.group('type').strip(),
+                                    'message': chat.group('message').strip()})
+    
+    def _worker_chat(self):
+        adminformat = re.compile('admin', re.IGNORECASE)
+        while True:
+            line = self.chatqueue.get()
+            if adminformat.search(line):
+                self.ircqueue.put((None, '%s: %s' % (line['name'], line['message'])))
+    
+    def _worker_irc(self):
+        lines = 0
+        while True:
+            if lines % 8 == 0:
+                time.sleep(2)
+            (conn, line) = self.ircqueue.get()
+            if not conn:
+                conn = self.fallbackconnect
+            conn.privmsg(self.channel, line)
+            lines += 1
+            self.ircqueue.task_done()
+            time.sleep(0.2)
+    
+    
