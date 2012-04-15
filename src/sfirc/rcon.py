@@ -77,7 +77,7 @@ class Rcon:
         cmd_string = (command + '\x00\x00').encode('latin-1')
         packet = struct.pack('<LLL', len(cmd_string) + 4 + 4, self.request_id, type) + cmd_string
         
-        if time.time() - self.lastConnect >= 60:
+        if time.time() - self.lastConnect >= 30:
             self.request_id -= 1
             self._disconnect()
             self._connect()

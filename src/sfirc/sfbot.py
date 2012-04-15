@@ -69,7 +69,8 @@ class SFBot(ircbot.SingleServerIRCBot):
             'fanta':        {'passphrase': 'rjk02<', 'aclid': 1},
             'Bluthund':     {'passphrase': '_;fNiI', 'aclid': 1},
             'JohnRambo':    {'passphrase': 'w37bY0', 'aclid': 1},
-            'Trypha':       {'passphrase': 'IqTJK=', 'aclid': 1}
+            'Trypha':       {'passphrase': 'IqTJK=', 'aclid': 1},
+            'nTraum':       {'passphrase': 'phil', 'aclid': 3}
         }
         self.cmdlist = {
             'help':             [0],
@@ -80,8 +81,8 @@ class SFBot(ircbot.SingleServerIRCBot):
                 'kick':         [2],
                 'restart':      [],
                 'say':          [1,2],
-                'watch':        [1,2],
-                'unwatch':      [1,2]
+                'watch':        [1,2,3],
+                'unwatch':      [1,2,3]
             },
             'match': {
                 'status':       [0],
@@ -89,8 +90,6 @@ class SFBot(ircbot.SingleServerIRCBot):
                 'map':          [1,2],
                 'switchteams':  [1,2],
                 'kick':         [1,2],
-                'kickteam':     [1,2],
-                'kickall':      [1,2],
                 'password':     [1,2],
                 'exec':         [1,2],
                 'restart':      [],
@@ -279,8 +278,8 @@ class SFBot(ircbot.SingleServerIRCBot):
             self.ircqueue.put((connection, 'No players.'))
             return
         
-        players.sort(key = lambda p: p['name'])
-        self.ircqueue.put((connection, ', '.join(['%s' % (p['name']) for p in players])))
+        players.sort(key = lambda p: p['name'].lower())
+        self.ircqueue.put((connection, '%d: %s' % (len(players), ', '.join(['%s' % (p['name']) for p in players]))))
 
     def cmd_restart(self, connection, event, command, args):
         self.ircqueue.put((connection, 'Restarting server "%s".' % (command[0])))
@@ -309,6 +308,7 @@ class SFBot(ircbot.SingleServerIRCBot):
                     self.watches.remove(p['steam'])
                     matches.append(p['name'])
             if len(matches) > 0:
+                matches.sort(key = lambda p: p.lower())
                 self.ircqueue.put((connection, 'Players removed from watchlist: %s' % (', '.join(matches))))
             else:
                 self.ircqueue.put((connection, 'No matching players.'))
@@ -327,6 +327,7 @@ class SFBot(ircbot.SingleServerIRCBot):
                     self.watches.append(p['steam'])
                     matches.append(p['name'])
             if len(matches) > 0:
+                matches.sort(key = lambda p: p.lower())
                 self.ircqueue.put((connection, 'Players put on watchlist: %s' % (', '.join(matches))))
             else:
                 self.ircqueue.put((connection, 'No matching players.'))
@@ -421,6 +422,7 @@ class SFBot(ircbot.SingleServerIRCBot):
             line = self.chatqueue.get()
             if line['steam'] in self.watches or line['message'].lower().find('admin') != -1:
                 self.ircqueue.put((self.fallbackconnect, '[CHAT] %s: %s' % (line['name'], line['message'])))
+                self.log.info('[CHAT] %s: %s' % (line['name'], line['message']))
             self.chatqueue.task_done()
     
     def _worker_irc(self):
