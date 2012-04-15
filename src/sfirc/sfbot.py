@@ -82,7 +82,8 @@ class SFBot(ircbot.SingleServerIRCBot):
                 'restart':      [],
                 'say':          [1,2],
                 'watch':        [1,2,3],
-                'unwatch':      [1,2,3]
+                'unwatch':      [1,2,3],
+                'watchlist':    [1,2,3]
             },
             'match': {
                 'status':       [0],
@@ -279,7 +280,7 @@ class SFBot(ircbot.SingleServerIRCBot):
             return
         
         players.sort(key = lambda p: p['name'].lower())
-        self.ircqueue.put((connection, '%d: %s' % (len(players), ', '.join(['%s' % (p['name']) for p in players]))))
+        self.ircqueue.put((connection, '(%d): %s' % (len(players), ', '.join(['%s' % (p['name']) for p in players]))))
 
     def cmd_restart(self, connection, event, command, args):
         self.ircqueue.put((connection, 'Restarting server "%s".' % (command[0])))
@@ -309,7 +310,7 @@ class SFBot(ircbot.SingleServerIRCBot):
                     matches.append(p['name'])
             if len(matches) > 0:
                 matches.sort(key = lambda p: p.lower())
-                self.ircqueue.put((connection, 'Players removed from watchlist: %s' % (', '.join(matches))))
+                self.ircqueue.put((connection, 'Players removed from watchlist (%d): %s' % (len(matches), ', '.join(matches))))
             else:
                 self.ircqueue.put((connection, 'No matching players.'))
     
@@ -328,9 +329,29 @@ class SFBot(ircbot.SingleServerIRCBot):
                     matches.append(p['name'])
             if len(matches) > 0:
                 matches.sort(key = lambda p: p.lower())
-                self.ircqueue.put((connection, 'Players put on watchlist: %s' % (', '.join(matches))))
+                self.ircqueue.put((connection, 'Players put on watchlist (%d): %s' % (len(matches), ', '.join(matches))))
             else:
                 self.ircqueue.put((connection, 'No matching players.'))
+    
+    def cmd_watchlist(self, connection, event, command, args):
+        players = self._parse_rcon_players(self._rcon(command[0], 'status'))
+        
+        remove = []
+        active = []
+        for steamid in self.watches:
+            if steamid not in [p['steam'] for p in players]:
+                remove.append(steamid)
+            else:
+                active.append(filter(lambda p: p['steam'] == steamid, players)['name'])
+        
+        for steamid in remove:
+            self.watches.remove(steamid)
+        
+        if len(active) > 0:
+            active.sort(key = lambda p: p.lower())
+            self.ircqueue.put((connection, 'Players on watchlist (%d): %s' % (len(active), ', '.join(active))))
+        else:
+            self.ircqueue.put((connection, 'No players on watchlist.'))
     
     def _auth_user(self, connection, event, account, passphrase):
         if account not in self.users:
@@ -420,7 +441,7 @@ class SFBot(ircbot.SingleServerIRCBot):
                 continue
             mapchange = mapchangeformat.search(data[30:-2].encode('utf-8'))
             if mapchange:
-                self.ircqueue.put((self.fallbackconnect, '[MAPCHANGE]: %s' % (mapchange['map'])))
+                self.ircqueue.put((self.fallbackconnect, '[MAPCHANGE]: %s' % (mapchange.group('map').strip())))
             
     
     def _worker_chat(self):
