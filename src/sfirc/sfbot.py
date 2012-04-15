@@ -57,7 +57,11 @@ class SFBot(ircbot.SingleServerIRCBot):
         self.udplistener = threading.Thread(target = SFBot._udp_listen, args = (self, '0.0.0.0', 26999))
         self.udplistener.daemon = True
         self.udplistener.start()
+        self.chatworker = threading.Thread(target = SFBot._worker_chat, args = (self,))
+        self.chatworker.daemon = True
+        self.chatworker.start()
         
+        self.watches = []
         self.rcon = dict()
         self.auths = dict()
         self.users = {
@@ -74,8 +78,10 @@ class SFBot(ircbot.SingleServerIRCBot):
                 'players':      [0],
                 'map':          [2],
                 'kick':         [2],
-                'restart':      [3],
-                'say':          [1,2]
+                'restart':      [],
+                'say':          [1,2],
+                'watch':        [1,2],
+                'unwatch':      [1,2]
             },
             'match': {
                 'status':       [0],
@@ -87,8 +93,8 @@ class SFBot(ircbot.SingleServerIRCBot):
                 'kickall':      [1,2],
                 'password':     [1,2],
                 'exec':         [1,2],
-                'restart':      [2,3],
-                'say':          [1,2,3]
+                'restart':      [],
+                'say':          [1,2]
             }
         }
     
@@ -213,7 +219,11 @@ class SFBot(ircbot.SingleServerIRCBot):
                         self._rcon(command[0], 'kickid %d' % (p['id']))
                         kicked.append(p['name'])
             else:
-                pattern = re.compile(r'%s' % (args[0]), re.IGNORECASE)
+                try:
+                    pattern = re.compile(r'%s' % (args[0]), re.IGNORECASE)
+                except Exception:
+                    self.ircqueue.put((connection, 'Invalid regular expression.'))
+                    return
                 for p in players:
                     if pattern.search(p['name']):
                         self._rcon(command[0], 'kickid %d' % (p['id']))
@@ -244,32 +254,33 @@ class SFBot(ircbot.SingleServerIRCBot):
             message = 'Current password is: %s' % (result)
         elif len(args) == 1:
             result = self._rcon(command[0], 'sv_password %s' % (args[0]))
-            message = 'New password is: %s' % (args[0])
+            message = 'Password set to: %s' % (args[0])
         self.ircqueue.put((connection, message))
 
     def cmd_players(self, connection, event, command, args):
         pattern = None
         if len(args) == 1:
-            pattern = re.compile(r'%s' % (args[0]), re.IGNORECASE)
+            try:
+                pattern = re.compile(r'%s' % (args[0]), re.IGNORECASE)
+            except Exception:
+                self.ircqueue.put((connection, 'Invalid regular expression.'))
+                return
                 
         players = self._parse_rcon_players(self._rcon(command[0], 'status'))
-        pCount = 0
-        for p in players:
-            if pattern is None:
-                if pCount % 8 == 1:
-                    time.sleep(0.5)
-                self.ircqueue.put((connection, '%4d %s' % (int(p['id']), p['name'])))
-                pCount += 1
-            else:
+        
+        if pattern is not None:
+            matches = []
+            for p in players:
                 if pattern.search(p['name']):
-                    if pCount % 8 == 1:
-                        time.sleep(0.5)
-                    self.ircqueue.put((connection, '%4d %s' % (int(p['id']), p['name'])))
-                    pCount += 1
-        if pCount == 0:
-            self.ircqueue.put((connection, 'No players found.'))
-        else:
-            self.ircqueue.put((connection, '%d players found.' % (pCount)))
+                    matches.append(p)
+            players = matches
+        
+        if len(players) == 0:
+            self.ircqueue.put((connection, 'No players.'))
+            return
+        
+        players.sort(key = lambda p: p['name'])
+        self.ircqueue.put((connection, ', '.join(['%s' % (p['name']) for p in players])))
 
     def cmd_restart(self, connection, event, command, args):
         self.ircqueue.put((connection, 'Restarting server "%s".' % (command[0])))
@@ -281,8 +292,44 @@ class SFBot(ircbot.SingleServerIRCBot):
 
     def cmd_status(self, connection, event, command, args):
         status = self._parse_rcon_status(self._rcon(command[0], 'status'))
-        for property in status:
-            self.ircqueue.put((connection, '%s: %s' % (property, status[property])))
+        self.ircqueue.put((connection, '%s' % (status['hostname'])))
+        self.ircqueue.put((connection, '%s, players: %s' % (status['map'].split()[0], status['players'])))
+    
+    def cmd_unwatch(self, connection, event, command, args):
+        if len(args) == 1:
+            try:
+                pattern = re.compile(r'%s' % (args[0]), re.IGNORECASE)
+            except Exception:
+                self.ircqueue.put((connection, 'Invalid regular expression.'))
+                return
+            
+            matches = []
+            for p in self._parse_rcon_players(self._rcon(command[0], 'status')):
+                if pattern.search(p['name']) and p['steam'] in self.watches:
+                    self.watches.remove(p['steam'])
+                    matches.append(p['name'])
+            if len(matches) > 0:
+                self.ircqueue.put((connection, 'Players removed from watchlist: %s' % (', '.join(matches))))
+            else:
+                self.ircqueue.put((connection, 'No matching players.'))
+    
+    def cmd_watch(self, connection, event, command, args):
+        if len(args) == 1:
+            try:
+                pattern = re.compile(r'%s' % (args[0]), re.IGNORECASE)
+            except Exception:
+                self.ircqueue.put((connection, 'Invalid regular expression.'))
+                return
+            
+            matches = []
+            for p in self._parse_rcon_players(self._rcon(command[0], 'status')): 
+                if pattern.search(p['name']) and p['steam'] not in self.watches:
+                    self.watches.append(p['steam'])
+                    matches.append(p['name'])
+            if len(matches) > 0:
+                self.ircqueue.put((connection, 'Players put on watchlist: %s' % (', '.join(matches))))
+            else:
+                self.ircqueue.put((connection, 'No matching players.'))
     
     def _auth_user(self, connection, event, account, passphrase):
         if account not in self.users:
@@ -361,7 +408,7 @@ class SFBot(ircbot.SingleServerIRCBot):
         re.MULTILINE|re.VERBOSE)
         while True:
             data = log.recv(1024)
-            chat = lineformat.search(data)
+            chat = lineformat.search(data[30:-2].encode('utf-8'))
             if chat:
                 self.chatqueue.put({'name': chat.group('name').strip(),
                                     'steam': chat.group('steam').strip(),
@@ -370,11 +417,11 @@ class SFBot(ircbot.SingleServerIRCBot):
                                     'message': chat.group('message').strip()})
     
     def _worker_chat(self):
-        adminformat = re.compile('admin', re.IGNORECASE)
         while True:
             line = self.chatqueue.get()
-            if adminformat.search(line):
-                self.ircqueue.put((None, '%s: %s' % (line['name'], line['message'])))
+            if line['steam'] in self.watches or line['message'].lower().find('admin') != -1:
+                self.ircqueue.put((self.fallbackconnect, '[CHAT] %s: %s' % (line['name'], line['message'])))
+            self.chatqueue.task_done()
     
     def _worker_irc(self):
         lines = 0
@@ -382,8 +429,11 @@ class SFBot(ircbot.SingleServerIRCBot):
             if lines % 8 == 0:
                 time.sleep(2)
             (conn, line) = self.ircqueue.get()
-            if not conn:
+            if not conn and self.fallbackconnect:
                 conn = self.fallbackconnect
+            if not conn and not self.fallbackconnect:
+                self.ircqueue.task_done()
+                continue
             conn.privmsg(self.channel, line)
             lines += 1
             self.ircqueue.task_done()
