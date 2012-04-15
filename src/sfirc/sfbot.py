@@ -1,3 +1,5 @@
+# -*- coding: utf-8 -*-
+
 # Copyright (c) 2012 Johannes Bendler
 # Licensed under the MIT License (MIT)
 #
@@ -168,7 +170,6 @@ class SFBot(ircbot.SingleServerIRCBot):
     
     def on_welcome(self, connection, event):
         connection.join(self.channel)
-        self.ircqueue.put((connection, 'Ohai'))
         self.fallbackconnect = connection
     
     def cmd_exec(self, connection, event, command, args):
@@ -342,7 +343,7 @@ class SFBot(ircbot.SingleServerIRCBot):
             if steamid not in [p['steam'] for p in players]:
                 remove.append(steamid)
             else:
-                active.append(filter(lambda p: p['steam'] == steamid, players)['name'])
+                active.append(filter(lambda p: p['steam'] == steamid, players)[0]['name'])
         
         for steamid in remove:
             self.watches.remove(steamid)
@@ -385,7 +386,7 @@ class SFBot(ircbot.SingleServerIRCBot):
         players = playerformat.findall(result)
         pList = []
         for p in players:
-            pList.append({'id': int(p[0]), 'name': p[1].encode('utf-8'), 'steam': p[2].encode('utf-8'), 'ip': p[3].encode('utf-8')})
+            pList.append({'id': int(p[0]), 'name': p[1], 'steam': p[2], 'ip': p[3]})
         return pList
     
     def _parse_rcon_status(self, result):
@@ -431,7 +432,7 @@ class SFBot(ircbot.SingleServerIRCBot):
         mapchangeformat = re.compile('^Loading map "(?P<map>.+?)"')
         while True:
             data = log.recv(1024)
-            chat = lineformat.search(data[30:-2].encode('utf-8'))
+            chat = lineformat.search(data[30:-2])
             if chat:
                 self.chatqueue.put({'name': chat.group('name').strip(),
                                     'steam': chat.group('steam').strip(),
@@ -439,7 +440,7 @@ class SFBot(ircbot.SingleServerIRCBot):
                                     'type': chat.group('type').strip(),
                                     'message': chat.group('message').strip()})
                 continue
-            mapchange = mapchangeformat.search(data[30:-2].encode('utf-8'))
+            mapchange = mapchangeformat.search(data[30:-2])
             if mapchange:
                 self.ircqueue.put((self.fallbackconnect, '[MAPCHANGE]: %s' % (mapchange.group('map').strip())))
             

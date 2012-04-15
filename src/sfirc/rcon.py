@@ -1,3 +1,5 @@
+# -*- coding: utf-8 -*-
+
 # Copyright (c) 2012 Johannes Bendler
 # Licensed under the MIT License (MIT)
 #
@@ -118,7 +120,7 @@ class Rcon:
             if not len(poll[0]) and size < 3700:
                 break
             
-        return response.decode('utf-8')
+        return response
     
     def send(self, command):
         if self.authenticated == False:

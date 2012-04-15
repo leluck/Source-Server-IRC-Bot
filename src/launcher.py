@@ -1,4 +1,5 @@
 #!/usr/bin/python
+# -*- coding: utf-8 -*-
 
 # Copyright (c) 2012 Johannes Bendler
 # Licensed under the MIT License (MIT)
