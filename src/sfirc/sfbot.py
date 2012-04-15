@@ -406,7 +406,8 @@ class SFBot(ircbot.SingleServerIRCBot):
         log.bind((socket.gethostbyname(host), port))
         
         lineformat = re.compile('^"(?P<name>.+?)<\d+><(?P<steam>STEAM_.+?)><(?P<team>Spectator|Blue|Red)>"\s(?P<type>say|say_team)\s"(?P<message>.+?)"', 
-        re.MULTILINE|re.VERBOSE)
+                                re.MULTILINE|re.VERBOSE)
+        mapchangeformat = re.compile('^Loading map "(?P<map>.+?)"')
         while True:
             data = log.recv(1024)
             chat = lineformat.search(data[30:-2].encode('utf-8'))
@@ -416,6 +417,11 @@ class SFBot(ircbot.SingleServerIRCBot):
                                     'team': chat.group('team').strip(),
                                     'type': chat.group('type').strip(),
                                     'message': chat.group('message').strip()})
+                continue
+            mapchange = mapchangeformat.search(data[30:-2].encode('utf-8'))
+            if mapchange:
+                self.ircqueue.put((self.fallbackconnect, '[MAPCHANGE]: %s' % (mapchange['map'])))
+            
     
     def _worker_chat(self):
         while True:
