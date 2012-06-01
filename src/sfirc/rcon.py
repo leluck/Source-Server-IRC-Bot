@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-# Copyright (c) 2012 Johannes Bendler
+# Copyright (c) 2012 Alexander Kuhrt, Johannes Bendler
 # Licensed under the MIT License (MIT)
 #
 # Permission is hereby granted, free of charge, to any person obtaining 

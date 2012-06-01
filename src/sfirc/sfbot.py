@@ -21,13 +21,16 @@
 # FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS 
 # IN THE SOFTWARE.
 
+import os
 import re
 import time
 import socket
 import logging.handlers
 import Queue
 import threading
+import ConfigParser
 
+import sfirc.rcon
 import irclib.ircbot as ircbot
 import irclib.irclib as irclib
 
@@ -66,14 +69,10 @@ class SFBot(ircbot.SingleServerIRCBot):
         self.watches = []
         self.rcon = dict()
         self.auths = dict()
-        self.users = {
-            'LeLuck':       {'passphrase': '2f@P?A', 'aclid': 2},
-            'fanta':        {'passphrase': 'rjk02<', 'aclid': 1},
-            'Bluthund':     {'passphrase': '_;fNiI', 'aclid': 1},
-            'JohnRambo':    {'passphrase': 'w37bY0', 'aclid': 1},
-            'Trypha':       {'passphrase': 'IqTJK=', 'aclid': 1},
-            'nTraum':       {'passphrase': 'phil', 'aclid': 3}
-        }
+        self.users = dict()
+        self.loadRconsFromFile('../config/rcon.cfg')
+        self.loadUsersFromFile('../config/users.cfg')
+        
         self.cmdlist = {
             'help':             [0],
             'public': {
@@ -96,12 +95,61 @@ class SFBot(ircbot.SingleServerIRCBot):
                 'password':     [1,2],
                 'exec':         [1,2],
                 'restart':      [],
-                'say':          [1,2]
+                'say':          [1,2],
+                'watch':        [1,2,3],
+                'unwatch':      [1,2,3],
+                'watchlist':    [1,2,3]
             }
         }
+        self.help = {
+            'auth':             'Use /msg SfBot auth <account> <pass> to authenticate.',
+            'help':             'Yeh, so funny.',
+            'status':           'Print server status.',
+            'players':          'Print current players. Optional argument: A RegEx to filter players by their names.',
+            'map':              'Print current map. Optional argument: Map name to be instantly switched to.',
+            'kick':             'Kick all players that match the provided RegEx.',
+            'restart':          'Restart the server.',
+            'say':              'Print all arguments to the server\'s ingame chat.',
+            'watch':            'Put all players that match the provided RegEx to the watchlist. Their chat will be postet to the channel.',
+            'unwatch':          'Remove all players that match the provided RegEx from the watchlist.',
+            'watchlist':        'Show players that are currently on the watchlist.',
+            'exec':             'Execute a config file.',
+            'switchteams':      'Switch teams RED and BLU.'}
     
-    def set_rcon(self, identifier, rc):
-        self.rcon[identifier] = rc
+    def loadRconsFromFile(self, file):
+        cfg = ConfigParser.RawConfigParser()
+        if not os.path.isfile(file):
+            self.log.error('Cannot load RCON from file \'%s\', file not found.' % (file))
+            return
+        
+        cfg.read(file)
+        for identifier in cfg.sections():
+            try:
+                host = cfg.get(identifier, 'host')
+                port = cfg.getint(identifier, 'port')
+                passwd = cfg.get(identifier, 'pass')
+                self.rcon[identifier] = sfirc.rcon.Rcon(host, port, passwd)
+            except ConfigParser.NoOptionError as noe:
+                self.log.error('Error parsing RCON config: %s.' % (noe))
+        
+        self.log.info('Loaded RCON for: %s.' % (', '.join(cfg.sections())))
+    
+    def loadUsersFromFile(self, file):
+        cfg = ConfigParser.RawConfigParser()
+        if not os.path.isfile(file):
+            self.log.error('Cannot load users from file \'%s\', file not found.' % (file))
+            return
+        
+        cfg.read(file)
+        for username in cfg.sections():
+            try:
+                aclid = cfg.getint(username, 'aclid')
+                passwd = cfg.get(username, 'passphrase')
+                self.users[username] = {'passphrase': passwd, 'aclid': aclid}
+            except ConfigParser.NoOptionError as noe:
+                self.log.error('Error parsing user config: %s.' % (noe))
+        
+        self.log.info('Loaded users: %s.' % (', '.join(cfg.sections())))
     
     def on_pubmsg(self, connection, event):
         cmdParts = event.arguments()[0].split()
@@ -164,7 +212,7 @@ class SFBot(ircbot.SingleServerIRCBot):
             if event.source() in self.auths:
                 account = self.auths[event.source()]['account']
                 seconds = time.time() - self.auths[event.source()]['time']
-                connection.notice(irclib.nm_to_n(event.source()), 'You are authed as %s (%s).' % (account, self._prettyfy_time(seconds)))
+                connection.notice(irclib.nm_to_n(event.source()), 'You are authed as %s (%s).' % (account, self._prettify_time(seconds)))
             else:
                 connection.notice(irclib.nm_to_n(event.source()), 'You are not authed.')
     
@@ -182,25 +230,31 @@ class SFBot(ircbot.SingleServerIRCBot):
                 self.ircqueue.put((connection, 'Config \'%s\' executed.' % (file)))
     
     def cmd_help(self, connection, event, command, args):
-        acl_id = 0
-        if event.source() in self.auths and self.auths[event.source()]['authed']:
-            acl_id = self.users[self.auths[event.source()]['account']]['aclid']
-        
-        cmdlist = []
-        for cmd in self.cmdlist:
-            if type(self.cmdlist[cmd]) is type([]):
-                if 0 in self.cmdlist[cmd] or acl_id in self.cmdlist[cmd] \
-                and hasattr(self, 'cmd_%s' % (cmd)):
-                    cmdlist.append(cmd)
+        if len(args) == 0:
+            acl_id = 0
+            if event.source() in self.auths and self.auths[event.source()]['authed']:
+                acl_id = self.users[self.auths[event.source()]['account']]['aclid']
+            
+            cmdlist = []
+            for cmd in self.cmdlist:
+                if type(self.cmdlist[cmd]) is type([]):
+                    if 0 in self.cmdlist[cmd] or acl_id in self.cmdlist[cmd] \
+                    and hasattr(self, 'cmd_%s' % (cmd)):
+                        cmdlist.append(cmd)
+                else:
+                    for subcmd in self.cmdlist[cmd]:
+                        if 0 in self.cmdlist[cmd][subcmd] or acl_id in self.cmdlist[cmd][subcmd] \
+                        and hasattr(self, 'cmd_%s' % (subcmd)):
+                            cmdlist.append('%s %s' % (cmd, subcmd))
+            
+            cmdlist.sort()
+            connection.notice(irclib.nm_to_n(event.source()), 'You have access to:')
+            connection.notice(irclib.nm_to_n(event.source()), ', '.join(cmdlist))
+        else:
+            if args[-1] in self.help:
+                connection.notice(irclib.nm_to_n(event.source()), self.help[args[-1]])
             else:
-                for subcmd in self.cmdlist[cmd]:
-                    if 0 in self.cmdlist[cmd][subcmd] or acl_id in self.cmdlist[cmd][subcmd] \
-                    and hasattr(self, 'cmd_%s' % (subcmd)):
-                        cmdlist.append('%s %s' % (cmd, subcmd))
-        
-        cmdlist.sort()
-        connection.notice(irclib.nm_to_n(event.source()), 'You have access to:')
-        connection.notice(irclib.nm_to_n(event.source()), ', '.join(cmdlist))
+                connection.notice(irclib.nm_to_n(event.source()), 'No help available for command \'%s\'.' % (args[-1]))
     
     def cmd_kick(self, connection, event, command, args):
         if len(args) == 1:
@@ -407,7 +461,7 @@ class SFBot(ircbot.SingleServerIRCBot):
         
         return self.rcon[identifier].send(command)
     
-    def _prettyfy_time(self, diff):
+    def _prettify_time(self, diff):
         diff = int(diff)
         
         if diff < 10:
@@ -429,7 +483,7 @@ class SFBot(ircbot.SingleServerIRCBot):
         
         lineformat = re.compile('^"(?P<name>.+?)<\d+><(?P<steam>STEAM_.+?)><(?P<team>Spectator|Blue|Red)>"\s(?P<type>say|say_team)\s"(?P<message>.+?)"', 
                                 re.MULTILINE|re.VERBOSE)
-        mapchangeformat = re.compile('^Loading map "(?P<map>.+?)"')
+        #mapchangeformat = re.compile('^Loading map "(?P<map>.+?)"')
         while True:
             data = log.recv(1024)
             chat = lineformat.search(data[30:-2])
@@ -440,9 +494,9 @@ class SFBot(ircbot.SingleServerIRCBot):
                                     'type': chat.group('type').strip(),
                                     'message': chat.group('message').strip()})
                 continue
-            mapchange = mapchangeformat.search(data[30:-2])
-            if mapchange:
-                self.ircqueue.put((self.fallbackconnect, '[MAPCHANGE]: %s' % (mapchange.group('map').strip())))
+            #mapchange = mapchangeformat.search(data[30:-2])
+            #if mapchange:
+            #    self.ircqueue.put((self.fallbackconnect, '[MAPCHANGE]: %s' % (mapchange.group('map').strip())))
             
     
     def _worker_chat(self):
