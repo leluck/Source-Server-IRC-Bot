@@ -22,7 +22,7 @@
 # FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS 
 # IN THE SOFTWARE.
 
-import sfirc.sfbot
+import lameirc.lamebot
 import ConfigParser
 
 def launch():
@@ -42,7 +42,7 @@ def launch():
         print(noe)
         return
     
-    bot = sfirc.sfbot.SFBot(nick, chan, host, port)
+    bot = lameirc.lamebot.LameBot(nick, chan, host, port)
     bot.start()
 
 if __name__ == '__main__':

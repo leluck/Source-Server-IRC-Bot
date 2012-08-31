@@ -30,14 +30,14 @@ import Queue
 import threading
 import ConfigParser
 
-import sfirc.rcon
+import lameirc.rcon
 import irclib.ircbot as ircbot
 import irclib.irclib as irclib
 
-class SFRconIdentifierError(Exception):
+class RconIdentifierError(Exception):
     pass
 
-class SFBot(ircbot.SingleServerIRCBot):
+class LameBot(ircbot.SingleServerIRCBot):
     def __init__(self, nick, channel, server, port = 6667):
         ircbot.SingleServerIRCBot.__init__(self, [(server, port)], nick, nick)
         self.channel = channel
@@ -46,23 +46,23 @@ class SFBot(ircbot.SingleServerIRCBot):
         
         self.log = logging.Logger('SFBot')
         self.log.setLevel(logging.INFO)
-        fHandler = logging.handlers.WatchedFileHandler('../log/sfbot.log')
+        fHandler = logging.handlers.WatchedFileHandler('../log/lamebot.log')
         fHandler.setLevel(logging.INFO)
         fHandler.setFormatter(logging.Formatter('%(asctime)s | %(message)s'))
         self.log.addHandler(fHandler)
         
-        self.log.info('## Joined as %s in: %s@%s:%d' % (nick, channel, server, port))
+        self.log.info('[SYSTEM] Joined as \'%s\' in: %s@%s:%d' % (nick, channel, server, port))
         
         self.ircqueue = Queue.Queue(30)
-        self.ircsender = threading.Thread(target = SFBot._worker_irc, args = (self,))
+        self.ircsender = threading.Thread(target = LameBot._worker_irc, args = (self,))
         self.ircsender.daemon = True
         self.ircsender.start()
         
         self.chatqueue = Queue.Queue(10)
-        self.udplistener = threading.Thread(target = SFBot._udp_listen, args = (self, '0.0.0.0', 26999))
+        self.udplistener = threading.Thread(target = LameBot._udp_listen, args = (self, '0.0.0.0', 26999))
         self.udplistener.daemon = True
         self.udplistener.start()
-        self.chatworker = threading.Thread(target = SFBot._worker_chat, args = (self,))
+        self.chatworker = threading.Thread(target = LameBot._worker_chat, args = (self,))
         self.chatworker.daemon = True
         self.chatworker.start()
         
@@ -75,6 +75,9 @@ class SFBot(ircbot.SingleServerIRCBot):
         
         self.cmdlist = {
             'help':             [0],
+            'reloadrcon':       [2],
+            'reloadusers':      [2],
+            'listservers':      [0],
             'public': {
                 'status':       [0],
                 'players':      [0],
@@ -119,7 +122,7 @@ class SFBot(ircbot.SingleServerIRCBot):
     def loadRconsFromFile(self, file):
         cfg = ConfigParser.RawConfigParser()
         if not os.path.isfile(file):
-            self.log.error('Cannot load RCON from file \'%s\', file not found.' % (file))
+            self.log.error('[SYSTEM] Cannot load RCON from file \'%s\', file not found.' % (file))
             return
         
         cfg.read(file)
@@ -128,16 +131,17 @@ class SFBot(ircbot.SingleServerIRCBot):
                 host = cfg.get(identifier, 'host')
                 port = cfg.getint(identifier, 'port')
                 passwd = cfg.get(identifier, 'pass')
-                self.rcon[identifier] = sfirc.rcon.Rcon(host, port, passwd)
+                self.rcon[identifier] = lameirc.rcon.Rcon(host, port, passwd)
+                self.log.info('[SYSTEM] Loaded RCON for \'%s\'.' % (identifier))
+            except lameirc.rcon.RconException as re:
+                self.log.error('[SYSTEM] RCON exception in \'%s\': %s' % (identifier, re))
             except ConfigParser.NoOptionError as noe:
-                self.log.error('Error parsing RCON config: %s.' % (noe))
-        
-        self.log.info('Loaded RCON for: %s.' % (', '.join(cfg.sections())))
+                self.log.error('[SYSTEM] Error parsing RCON config: %s.' % (noe))
     
     def loadUsersFromFile(self, file):
         cfg = ConfigParser.RawConfigParser()
         if not os.path.isfile(file):
-            self.log.error('Cannot load users from file \'%s\', file not found.' % (file))
+            self.log.error('[SYSTEM] Cannot load users from file \'%s\', file not found.' % (file))
             return
         
         cfg.read(file)
@@ -147,13 +151,13 @@ class SFBot(ircbot.SingleServerIRCBot):
                 passwd = cfg.get(username, 'passphrase')
                 self.users[username] = {'passphrase': passwd, 'aclid': aclid}
             except ConfigParser.NoOptionError as noe:
-                self.log.error('Error parsing user config: %s.' % (noe))
+                self.log.error('[SYSTEM] Error parsing user config: %s.' % (noe))
         
-        self.log.info('Loaded users: %s.' % (', '.join(cfg.sections())))
+        self.log.info('[SYSTEM] Loaded users: %s.' % (', '.join(cfg.sections())))
     
     def on_pubmsg(self, connection, event):
         cmdParts = event.arguments()[0].split()
-        if cmdParts[0] == '!sf':
+        if cmdParts[0] == '!lb':
             target = self.cmdlist
             key = None
             last = 1
@@ -179,12 +183,12 @@ class SFBot(ircbot.SingleServerIRCBot):
                     else:
                         getattr(self, 'cmd_%s' % (key))(connection, event, cmdParts[1:last], cmdParts[last:])
                     
-                    self.log.info('"%s" (%s): (%s) %s' % (irclib.nm_to_n(event.source()), account, authed, ' '.join(cmdParts[1:])))
+                    self.log.info('[COMMAND] "%s" (%s): (%s) %s' % (irclib.nm_to_n(event.source()), account, authed, ' '.join(cmdParts[1:])))
                     return
             except TypeError as te:
                 print(te)
                 return
-            except SFRconIdentifierError:
+            except RconIdentifierError:
                 connection.notice(irclib.nm_to_n(event.source()), 'No rcon available for \'%s\'.' % (cmdParts[1]))
                 return
             connection.notice(irclib.nm_to_n(event.source()), 'No such command. Try \'!sf help\' for an overview of available commands.')
@@ -289,6 +293,9 @@ class SFBot(ircbot.SingleServerIRCBot):
             else:
                 self.ircqueue.put((connection, 'No matching player.'))
     
+    def cmd_listservers(self, connection, event, command, args):
+        self.ircqueue.put((connection, 'Known servers are: %s' % (', '.join(self.rcon))))
+    
     def cmd_map(self, connection, event, command, args):
         message = ''
         if len(args) == 0:
@@ -336,6 +343,16 @@ class SFBot(ircbot.SingleServerIRCBot):
         
         players.sort(key = lambda p: p['name'].lower())
         self.ircqueue.put((connection, '(%d): %s' % (len(players), ', '.join(['%s' % (p['name']) for p in players]))))
+
+    def cmd_reloadrcon(self, connection, event, command, args):
+        self.log.info('[SYSTEM] Reloading RCON configurations.')
+        self.loadRconsFromFile('../config/rcon.cfg')
+    
+    def cmd_reloadusers(self, connection, event, command, args):
+        self.log.info('[SYSTEM] Reloading user configurations.')
+        for user in self.auths:
+            connection.notice(irclib.nm_to_n(user), 'Users are being reloaded. Please re-confirm your authentication.')
+        self.loadUsersFromFile('../config/users.cfg')
 
     def cmd_restart(self, connection, event, command, args):
         self.ircqueue.put((connection, 'Restarting server "%s".' % (command[0])))
@@ -410,13 +427,13 @@ class SFBot(ircbot.SingleServerIRCBot):
     
     def _auth_user(self, connection, event, account, passphrase):
         if account not in self.users:
-            self.log.info('"%s" tried to auth with non-existant account "%s"' % (irclib.nm_to_n(event.source()), account))
+            self.log.info('[SYSTEM] "%s" tried to auth with non-existant account "%s"' % (irclib.nm_to_n(event.source()), account))
             return False
         
         if self.users[account]['passphrase'] == passphrase:
             self.auths[event.source()] = {'account': account, 'authed': True, 'time': time.time()}
             connection.notice(irclib.nm_to_n(event.source()), 'Authentication successful.')
-            self.log.info('"%s" authed as "%s" (acl level %d)' % (irclib.nm_to_n(event.source()), account, self.users[account]['aclid']))
+            self.log.info('[SYSTEM] "%s" authed as "%s" (acl level %d)' % (irclib.nm_to_n(event.source()), account, self.users[account]['aclid']))
     
     def _check_acl(self, event, command):
         target = self.cmdlist
@@ -457,7 +474,7 @@ class SFBot(ircbot.SingleServerIRCBot):
 
     def _rcon(self, identifier, command):
         if identifier not in self.rcon:
-            raise SFRconIdentifierError
+            raise RconIdentifierError
         
         return self.rcon[identifier].send(command)
     

@@ -24,17 +24,16 @@
 import socket
 import struct
 import select
-import time
 
-class SFRconException(Exception):
+class RconException(Exception):
     pass
 
-
 class Rcon:
-    SERVERDATA_AUTH = 3
-    SERVERDATA_AUTH_RESPONSE = 2
     SERVERDATA_EXECCOMMAND = 2
+    SERVERDATA_AUTH = 3
+    
     SERVERDATA_RESPONSE_VALUE = 0
+    SERVERDATA_AUTH_RESPONSE = 2
     
     def __init__(self, host, port = 27015, rcon_password = None, timeout = 120):
         self.socket = None
@@ -42,6 +41,7 @@ class Rcon:
         self.port = port
         self.rcon_password = rcon_password
         self.timeout = timeout
+        
         self.request_id = 0
         self.authenticated = False
         
@@ -53,13 +53,12 @@ class Rcon:
     def _connect(self):
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.socket.settimeout(self.timeout)
-        self.lastConnect = time.time()
         self.socket.connect((self.ip, self.port))
         
         if self.rcon_password:
             self._authenticate()
         else:
-            raise SFRconException('No RCON password given')
+            raise RconException('No RCON password given')
     
     def _disconnect(self):
         if self.socket:
@@ -69,62 +68,52 @@ class Rcon:
         self._send(self.rcon_password, type = self.SERVERDATA_AUTH)
         
         if self._recv() != '' and self.authenticated == False:
-            raise SFRconException('IP is banned')
+            raise RconException('IP is banned')
         
-        self._recv() # Whatever...
+        # Receive empty packet after authentication
+        self._recv()
     
     def _send(self, command, type = SERVERDATA_EXECCOMMAND):
         self.request_id += 1
         
-        cmd_string = (command + '\x00\x00').encode('latin-1')
-        packet = struct.pack('<LLL', len(cmd_string) + 4 + 4, self.request_id, type) + cmd_string
-        
-        if time.time() - self.lastConnect >= 30:
-            self.request_id -= 1
-            self._disconnect()
-            self._connect()
+        fullcmd = (command + '\x00\x00').encode('latin-1')
+        packet = struct.pack('<LLL', len(fullcmd) + 8, self.request_id, type) + fullcmd
         
         self.socket.send(packet)
-        
+    
     def _recv(self):
         response = b''
         
         while True:
             recv_buffer = b''
             
-            size = struct.unpack('<L', self.socket.recv(4))[0]
+            size, request_id, response_code = struct.unpack('<LLL', self.socket.recv(12))
             
-            while len(recv_buffer) < size:
+            while len(recv_buffer) + 8 < size:
                 recv_buffer += self.socket.recv(size - len(recv_buffer))
             
-            if len(recv_buffer) != size:
-                raise SFRconException('Received RCON response with bad length (%d of %d bytes)' % (len(recv_buffer), size))
-            
-            request_id, response_code = struct.unpack('<LL', recv_buffer[0:8])
-            
             if hex(request_id) == '0xffffffff':
-                raise SFRconException('Bad RCON password')
+                raise RconException('Bad RCON password.')
             elif request_id != self.request_id:
-                raise SFRconException('Received bad request id: %d (expected %d)' % (request_id, self.request_id))
+                raise RconException('Received bad request id: %d (expected %d)' % (request_id, self.request_id))
             
             if response_code == self.SERVERDATA_AUTH_RESPONSE:
                 self.authenticated = True
             elif response_code != self.SERVERDATA_RESPONSE_VALUE:
-                raise SFRconException('Invalid RCON response code: %d' % (response_code))
+                raise RconException('Invalid RCON response code: %d' % (response_code))
 
-            response += recv_buffer[8:size - 8 - 2]
+            response += recv_buffer[:size - 2]
             
             # Socket still has data to read?
             poll = select.select([self.socket], [], [], 0)
-            
-            if not len(poll[0]) and size < 3700:
+            if not len(poll[0]):
                 break
-            
-        return response
+        
+        return response[:-2]
     
     def send(self, command):
         if self.authenticated == False:
-            raise SFRconException('Not authenticated, cannot perform RCON command')
+            raise RconException('Not authenticated, cannot perform RCON command')
         
         self._send('%s' % command)
         return self._recv()
