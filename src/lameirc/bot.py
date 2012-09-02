@@ -100,7 +100,7 @@ class SourceServerIRCBot(ircbot.SingleServerIRCBot):
     
     def _auth_user(self, connection, event, account, passwdhash):
         if account not in self.users:
-            self.log.system('"%s" tried to auth with non-existant account "%s"' % (irclib.nm_to_n(event.source()), account))
+            self.log.system('"%s" tried to auth with non-existent account "%s"' % (irclib.nm_to_n(event.source()), account))
             return False
         
         try:
@@ -259,6 +259,9 @@ class SourceServerIRCBot(ircbot.SingleServerIRCBot):
                 self.communicate.notice(connection, event, 'You are authed as %s (%s).' % (account, self._prettify_time(seconds)))
             else:
                 self.communicate.notice(connection, event, 'You are not authed.')
+        
+        if len(args) > 0 and args[0].lower() == 'help':
+            self.cmd_help(connection, event, event.arguments()[0], [])
 
     def on_welcome(self, connection, event):
         connection.join(self.channel)
