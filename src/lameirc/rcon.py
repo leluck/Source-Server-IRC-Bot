@@ -35,13 +35,14 @@ class Rcon:
     SERVERDATA_RESPONSE_VALUE = 0
     SERVERDATA_AUTH_RESPONSE = 2
     
-    def __init__(self, host, port = 27015, rcon_password = None, timeout = 120):
+    def __init__(self, host, port = 27015, rcon_password = None, timeout = 120, log = None):
         self.socket = None
         self.ip = socket.gethostbyname(host)
         self.port = port
         self.rcon_password = rcon_password
         self.timeout = timeout
         
+        self.log = log
         self.request_id = 0
         self.authenticated = False
         
@@ -79,7 +80,11 @@ class Rcon:
         fullcmd = (command + '\x00\x00').encode('latin-1')
         packet = struct.pack('<LLL', len(fullcmd) + 8, self.request_id, type) + fullcmd
         
-        self.socket.send(packet)
+        try:
+            self.socket.send(packet)
+        except socket.error:
+            self._connect()
+            self._send(command, type) #retry
     
     def _recv(self):
         response = b''
@@ -87,7 +92,15 @@ class Rcon:
         while True:
             recv_buffer = b''
             
-            size, request_id, response_code = struct.unpack('<LLL', self.socket.recv(12))
+            size = struct.unpack('<L', self.socket.recv(4))[0]
+            
+            if size < 8:
+                self._log('Packet too short, retrying connection and authentication.')
+                self._disconnect()
+                self._connect()
+                return
+            
+            request_id, response_code = struct.unpack('<LL', self.socket.recv(8))
             
             while len(recv_buffer) + 8 < size:
                 recv_buffer += self.socket.recv(size - len(recv_buffer))
@@ -99,6 +112,7 @@ class Rcon:
             
             if response_code == self.SERVERDATA_AUTH_RESPONSE:
                 self.authenticated = True
+                self._log('Authentication successful at %s:%d.' % (self.ip, self.port))
             elif response_code != self.SERVERDATA_RESPONSE_VALUE:
                 raise RconException('Invalid RCON response code: %d' % (response_code))
 
@@ -117,3 +131,7 @@ class Rcon:
         
         self._send('%s' % command)
         return self._recv()
+    
+    def _log(self, message):
+        if self.log:
+            self.log.rcon(message)

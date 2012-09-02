@@ -22,27 +22,11 @@
 # FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS 
 # IN THE SOFTWARE.
 
-import lameirc.lamebot
-import ConfigParser
+import lameirc.bot
 
 def launch():
     
-    cfg = ConfigParser.RawConfigParser()
-    cfg.read('../config/irc.cfg')
-    
-    try:
-        nick = cfg.get('irc', 'nick')
-        host = cfg.get('irc', 'host')
-        port = cfg.getint('irc', 'port')
-        chan = cfg.get('irc', 'chan')
-    except ConfigParser.NoSectionError as nse:
-        print(nse)
-        return
-    except ConfigParser.NoOptionError as noe:
-        print(noe)
-        return
-    
-    bot = lameirc.lamebot.LameBot(nick, chan, host, port)
+    bot = lameirc.bot.SourceServerIRCBot()
     bot.start()
 
 if __name__ == '__main__':
