@@ -92,15 +92,13 @@ class Rcon:
         while True:
             recv_buffer = b''
             
-            size = struct.unpack('<L', self.socket.recv(4))[0]
-            
-            if size < 8:
+            try:
+                size, request_id, response_code = struct.unpack('<LLL', self.socket.recv(12))
+            except struct.error:
                 self._log('Packet too short, retrying connection and authentication.')
                 self._disconnect()
                 self._connect()
                 return
-            
-            request_id, response_code = struct.unpack('<LL', self.socket.recv(8))
             
             while len(recv_buffer) + 8 < size:
                 recv_buffer += self.socket.recv(size - len(recv_buffer))
