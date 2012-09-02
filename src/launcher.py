@@ -26,6 +26,7 @@ import lameirc.bot
 
 def launch():
     
+    #print('%s' % (hashlib.sha256('test').hexdigest()))
     bot = lameirc.bot.SourceServerIRCBot()
     bot.start()
 

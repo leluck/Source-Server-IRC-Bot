@@ -21,6 +21,7 @@
 # FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS 
 # IN THE SOFTWARE.
 
+import hashlib
 import json
 import re
 import sys
@@ -97,13 +98,13 @@ class SourceServerIRCBot(ircbot.SingleServerIRCBot):
         self._init_rcons()
         self.auths = dict()
     
-    def _auth_user(self, connection, event, account, passphrase):
+    def _auth_user(self, connection, event, account, passwdhash):
         if account not in self.users:
             self.log.system('"%s" tried to auth with non-existant account "%s"' % (irclib.nm_to_n(event.source()), account))
             return False
         
         try:
-            if self.users[account]['pass'] == passphrase:
+            if self.users[account]['pass'] == passwdhash:
                 self.auths[event.source()] = {'account': account, 'authed': True, 'time': time.time()}
                 self.communicate.notice(connection, event, 'Authentication successful.')
                 self.log.system('"%s" authed as "%s" (acl level %d)' % (irclib.nm_to_n(event.source()), account, self.users[account]['aclid']))
@@ -248,8 +249,8 @@ class SourceServerIRCBot(ircbot.SingleServerIRCBot):
         args = event.arguments()[0].split()
         if len(args) == 3 and args[0].lower() == 'auth':
             account = args[1]
-            passphrase = args[2]
-            self._auth_user(connection, event, account, passphrase)
+            passwdhash = hashlib.sha256(args[2]).hexdigest()
+            self._auth_user(connection, event, account, passwdhash)
         
         if len(args) == 1 and args[0].lower() == 'whoami':
             if event.source() in self.auths:
@@ -262,7 +263,7 @@ class SourceServerIRCBot(ircbot.SingleServerIRCBot):
     def on_welcome(self, connection, event):
         connection.join(self.channel)
         self.communicate.set_fallback_connect(connection)
-        self.log.system('Joined #%s as %s.' % (self.channel, self.nick))
+        self.log.system('Joined %s as %s.' % (self.channel, self.nick))
 
     def cmd_exec(self, connection, event, command, args):
         if len(args) == 1:
